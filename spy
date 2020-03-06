@@ -1,0 +1,75 @@
+#!/usr/bin/env python3 
+import argparse
+import re
+import os
+import os.path
+
+RED = "\u001b[31m"
+GREEN = "\u001b[32m"
+
+VALID_EXTENSIONS = [".txt", "", ".py", ".c", ".html", ".js", ".php", ".pl", ".css"]
+
+parser = argparse.ArgumentParser()
+parser.add_argument("regex", help="regular expression to search for",
+                    type=str)
+parser.add_argument("file", help="path to the file you want to scan",
+                    type=str)
+parser.add_argument("-r", help="searches a directory recursively",
+                    action="store_true")
+parser.add_argument("-e", "--extensions", help="add further file extensions to scan",
+                   type=str, default="", nargs="?")
+
+args = parser.parse_args()
+
+print(args.extensions)
+if args.extensions:
+    VALID_EXTENSIONS.extend(args.extensions.split(" "))
+    print(VALID_EXTENSIONS)
+
+path_ = os.path.join(os.getcwd(), args.file)
+regex = re.compile(args.regex)
+
+def reInLine(regex, i, line):
+    match = regex.search(line)
+    if match:
+        ms = match.start()
+        me = match.end()
+        return (i, line[0:ms] + colorize(line[ms:me], RED) + \
+               reInLine(regex, i, line[me:])[1])
+    return (i, line)
+
+def validateFile(filename):
+    ext = os.path.splitext(filename)[1]
+    return filename[0] != "." and ext in VALID_EXTENSIONS
+
+def colorize(string, color):
+    return color + string + "\u001b[0m"
+
+def scanFile(path):
+    with open(path, "r") as f:
+        content_raw = f.read()
+        content = content_raw.split("\n")
+
+        result = [reInLine(regex, i, line)
+                  for i, line in enumerate(content) if regex.search(line)]
+
+        return "\n".join([colorize(str(i+1) + ": ", RED) + line
+               for i, line in result])
+
+result = []
+def scanDir(path_):
+    dirContent = [file_ for file_ in os.listdir(path_) if validateFile(file_)]
+    for file_ in dirContent:
+        path = os.path.join(path_, file_)
+        if os.path.isfile(path):
+            res = scanFile(path)
+            if res:
+                result.append(colorize(path[len(path_):], GREEN) + "\n" + res)
+        elif os.path.isdir(path):
+            scanDir(path)
+
+if not args.r:
+    print(scanFile(path_))
+else:
+    scanDir(path_)
+print("\n".join(result))
