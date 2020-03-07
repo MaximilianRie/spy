@@ -12,64 +12,91 @@ VALID_EXTENSIONS = [".txt", "", ".py", ".c", ".html", ".js", ".php", ".pl", ".cs
 parser = argparse.ArgumentParser()
 parser.add_argument("regex", help="regular expression to search for",
                     type=str)
-parser.add_argument("file", help="path to the file you want to scan",
+parser.add_argument("path", help="path to the file you want to scan",
                     type=str)
 parser.add_argument("-r", help="searches a directory recursively",
                     action="store_true")
-parser.add_argument("-e", "--extensions", help="add further file extensions to scan",
-                   type=str, default="", nargs="?")
-
+parser.add_argument("-e", "--extensions", help="add further file extensions \
+                    to scan", type=str, default="", nargs="?")
 args = parser.parse_args()
 
-print(args.extensions)
 if args.extensions:
     VALID_EXTENSIONS.extend(args.extensions.split(" "))
-    print(VALID_EXTENSIONS)
 
-path_ = os.path.join(os.getcwd(), args.file)
-regex = re.compile(args.regex)
+path_ = os.path.abspath(args.path)
+regex_ = re.compile(args.regex)
 
-def reInLine(regex, i, line):
-    match = regex.search(line)
-    if match:
-        ms = match.start()
-        me = match.end()
-        return (i, line[0:ms] + colorize(line[ms:me], RED) + \
-               reInLine(regex, i, line[me:])[1])
-    return (i, line)
+def colorize(string, color):
+    """ colorize a string with ascii escape sequences """
+    return color + string + "\u001b[0m"
+
+def style(block):
+    """ a block is the result of scanning a file. It has the stucture
+    ("relative file path", [("lineNr", "highlighted line"), ...]). This
+    function  returns a string with the filename in green and every lineNr
+    and every line in a seperated line
+    """
+    filename = block[0]
+    return colorize(filename, GREEN) + "\n" + "\n".join(colorize(str(i+1) + \
+           ": ", RED) + line for i, line in block[1]) + "\n"
 
 def validateFile(filename):
+    """ returns if a file is valid by confirming that it does not start with a
+    "." and it's either extensionless or its extention is in VALID_EXTENSIONS
+    """
     ext = os.path.splitext(filename)[1]
     return filename[0] != "." and ext in VALID_EXTENSIONS
 
-def colorize(string, color):
-    return color + string + "\u001b[0m"
+def getRelativeFileLocation(path):
+    """ returns a path to the currently evaluated file, relative to the
+    position in the file system where the program is executed
+    """
+    if path == path_:
+        return os.path.basename(path)
+    return path[len(path_):]
+
+def reInLine(line):
+    """ takes a line as an input and returns a version of it where all
+    mathing sequences are colored red
+    """
+    match = regex_.search(line)
+    if match:
+        ms = match.start()
+        me = match.end()
+        return line[0:ms] + colorize(line[ms:me], RED) + \
+               reInLine(line[me:])
+    return line
 
 def scanFile(path):
+    """ takes a file as input and returns every line in the file with a match
+    in the "block"-format:
+    ("relative file path", [("lineNr", "highlighted line"), ...])
+    """
     with open(path, "r") as f:
         content_raw = f.read()
         content = content_raw.split("\n")
+        rel_file = getRelativeFileLocation(path)
 
-        result = [reInLine(regex, i, line)
-                  for i, line in enumerate(content) if regex.search(line)]
+        return (rel_file, [(i, reInLine(line)) for i, line in enumerate(content)
+                if regex_.search(line)])
 
-        return "\n".join([colorize(str(i+1) + ": ", RED) + line
-               for i, line in result])
-
-result = []
-def scanDir(path_):
-    dirContent = [file_ for file_ in os.listdir(path_) if validateFile(file_)]
+def scanDir(path):
+    """ applies the "scanFile" function recursively to every file in a directory
+    and the "scanDir" function to every directory
+    """
+    result = []
+    dirContent = [file_ for file_ in os.listdir(path) if validateFile(file_)]
     for file_ in dirContent:
-        path = os.path.join(path_, file_)
-        if os.path.isfile(path):
-            res = scanFile(path)
-            if res:
-                result.append(colorize(path[len(path_):], GREEN) + "\n" + res)
-        elif os.path.isdir(path):
-            scanDir(path)
+        npath = os.path.join(path, file_)
+        if os.path.isfile(npath):
+            res = scanFile(npath)
+            if res[1]:
+                result.append(res)
+        elif os.path.isdir(npath):
+            result.extend(scanDir(npath))
+    return result
 
 if not args.r:
-    print(scanFile(path_))
+    print(style(scanFile(path_)))
 else:
-    scanDir(path_)
-print("\n".join(result))
+    print("\n".join([style(block) for block in scanDir(path_)]))
