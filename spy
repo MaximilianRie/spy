@@ -86,7 +86,6 @@ def scanFile(path):
     in the "block"-format:
     ("relative file path", [("lineNr", "highlighted line"), ...])
     """
-    print(path)
     with open(path, "r") as f:
         content_raw = f.read()
         content = content_raw.split("\n")
@@ -100,7 +99,8 @@ def scanDir(path):
     and the "scanDir" function to every directory
     """
     result = []
-    dirContent = [file_ for file_ in os.listdir(path) if validateFile(file_)]
+    dirContent = [file_ for file_ in os.listdir(path) if validateFile(file_) or \
+                 os.path.isdir(os.path.join(path, file_))]
     for file_ in dirContent:
         npath = os.path.join(path, file_)
         if os.path.isfile(npath):
