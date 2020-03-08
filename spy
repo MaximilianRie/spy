@@ -1,9 +1,3 @@
-#!/usr/bin/env python3 
-import argparse
-import re
-import os
-import os.path
-
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
 
@@ -16,6 +10,7 @@ parser.add_argument("path", help="path to the file you want to scan",
                     type=str, default=None, nargs="?")
 parser.add_argument("-r", help="searches a directory recursively",
                     action="store_true")
+parser.add_argument("-i", help="ignores case sensitivits", action="store_true")
 parser.add_argument("--ext",  help="add further file extensions to scan for. \
                     Specify as the last option but before [regex] and [path]. \
                     Example: spy -r --ext pl hs '^reg*ex+' /path/to/dir",
@@ -24,12 +19,16 @@ args = parser.parse_args()
 
 """ determine regex_ and path_ corresponding to user input """
 if args.ext:
-    regex_ = re.compile(args.ext[-2])
+    regex = args.ext[-2]
     path_ = os.path.abspath(args.ext[-1])
     VALID_EXTENSIONS.extend(["."+ext for ext in args.ext[:-2]])
 else:
     path_ = os.path.abspath(args.path)
-    regex_ = re.compile(args.regex)
+    regex = args.regex
+if args.i:
+    regex_ = re.compile(regex, re.I)
+else:
+    regex_ = re.compile(regex)
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
@@ -42,6 +41,8 @@ def style(block):
     and every line in a seperated line
     """
     filename = block[0]
+    if block[1] == []:
+        return colorize("No matches", RED)
     return colorize(filename, GREEN) + "\n" + "\n".join(colorize(str(i+1) + \
            ": ", RED) + line for i, line in block[1]) + "\n"
 
