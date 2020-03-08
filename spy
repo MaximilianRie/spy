@@ -7,24 +7,29 @@ import os.path
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
 
-VALID_EXTENSIONS = [".txt", "", ".py", ".c", ".html", ".js", ".php", ".pl", ".css"]
+VALID_EXTENSIONS = [".txt", "", ".py", ".c", ".html", ".php", ".css"]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("regex", help="regular expression to search for",
-                    type=str)
+                    type=str, default=None, nargs="?")
 parser.add_argument("path", help="path to the file you want to scan",
-                    type=str)
+                    type=str, default=None, nargs="?")
 parser.add_argument("-r", help="searches a directory recursively",
                     action="store_true")
-parser.add_argument("-e", "--extensions", help="add further file extensions \
-                    to scan", type=str, default="", nargs="?")
+parser.add_argument("--ext",  help="add further file extensions to scan for. \
+                    Specify as the last option but before [regex] and [path]. \
+                    Example: spy -r --ext pl hs '^reg*ex+' /path/to/dir",
+                    type=str, nargs="*")
 args = parser.parse_args()
 
-if args.extensions:
-    VALID_EXTENSIONS.extend(args.extensions.split(" "))
-
-path_ = os.path.abspath(args.path)
-regex_ = re.compile(args.regex)
+""" determine regex_ and path_ corresponding to user input """
+if args.ext:
+    regex_ = re.compile(args.ext[-2])
+    path_ = os.path.abspath(args.ext[-1])
+    VALID_EXTENSIONS.extend(["."+ext for ext in args.ext[:-2]])
+else:
+    path_ = os.path.abspath(args.path)
+    regex_ = re.compile(args.regex)
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
