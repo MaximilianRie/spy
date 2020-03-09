@@ -7,7 +7,7 @@ import argparse
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
 
-VALID_EXTENSIONS = [".txt", ".py", ".c", ".html", ".php", ".css"]
+VALID_EXTENSIONS = [".txt", ".py", ".c", "",  ".html", ".php", ".css"]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("regex", help="regular expression to search for",
@@ -49,8 +49,8 @@ def style(block):
     and every line in a seperated line
     """
     filename = block[0]
-    if block[1] == []:
-        return colorize("No matches", RED)
+    if not block[1]:
+        return ""
     return colorize(filename, GREEN) + "\n" + "\n".join(colorize(str(i+1) + \
            ": ", RED) + line for i, line in block[1]) + "\n"
 
@@ -86,13 +86,23 @@ def scanFile(path):
     in the "block"-format:
     ("relative file path", [("lineNr", "highlighted line"), ...])
     """
-    with open(path, "r") as f:
-        content_raw = f.read()
-        content = content_raw.split("\n")
-        rel_file = getRelativeFileLocation(path)
-
+    rel_file = getRelativeFileLocation(path)
+    try:
+        f = open(path, "r")
+        content = f.read().split("\n")
+    except PermissionError:
+        print(colorize(f"Couldn't open file: {rel_file}", RED))
+        return (None, None)
+    except:
+        print(colorize(f"Couldn't read file: {rel_file}", RED))
+        return (None, None)
+    else:
         return (rel_file, [(i, reInLine(line)) for i, line in enumerate(content)
                 if regex_.search(line)])
+    finally:
+        try:
+            f.close()
+        except: pass
 
 def scanDir(path):
     """ applies the "scanFile" function recursively to every file in a directory
@@ -113,5 +123,6 @@ def scanDir(path):
 
 if not args.r:
     print(style(scanFile(path_)))
+
 else:
     print("\n".join([style(block) for block in scanDir(path_)]))
