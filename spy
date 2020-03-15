@@ -24,6 +24,7 @@ parser.add_argument("--ext",  help="add further file extensions to scan for. \
                     Example: spy -r --ext pl hs '^reg*ex+' /path/to/dir",
                     type=str, nargs="*")
 args = parser.parse_args()
+print(args)
 
 """ determine regex_ and path_ corresponding to user input """
 if args.ext:
@@ -37,6 +38,8 @@ if args.i:
     regex_ = re.compile(regex, re.I)
 else:
     regex_ = re.compile(regex)
+
+del regex
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
@@ -54,12 +57,16 @@ def style(block):
     return colorize(filename, GREEN) + "\n" + "\n".join(colorize(str(i+1) + \
            ": ", RED) + line for i, line in block[1]) + "\n"
 
-def validateFile(filename):
+def validatePath(path):
     """ returns if a file is valid by confirming that it does not start with a
     "." and it's either extensionless or its extention is in VALID_EXTENSIONS
     """
+    filename=os.path.basename(path)
     ext = os.path.splitext(filename)[1]
-    return (filename[0] != "." or args.d) and ext in VALID_EXTENSIONS
+    if os.path.isfile(path):
+        return (filename[0] != "." or args.d) and ext in VALID_EXTENSIONS
+    elif os.path.isdir(path):
+        return filename[0] != "." or args.d
 
 def getRelativeFileLocation(path):
     """ returns a path to the currently evaluated file, relative to the
@@ -109,8 +116,7 @@ def scanDir(path):
     and the "scanDir" function to every directory
     """
     result = []
-    dirContent = [file_ for file_ in os.listdir(path) if validateFile(file_) or \
-                 os.path.isdir(os.path.join(path, file_))]
+    dirContent = [file_ for file_ in os.listdir(path) if validatePath(os.path.join(path, file_))]
     for file_ in dirContent:
         npath = os.path.join(path, file_)
         if os.path.isfile(npath):
