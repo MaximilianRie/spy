@@ -3,6 +3,7 @@ import os
 import os.path
 import re
 import argparse
+import sys
 
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
@@ -11,35 +12,37 @@ VALID_EXTENSIONS = [".txt", ".py", ".c", "",  ".html", ".php", ".css"]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("regex", help="regular expression to search for",
-                    type=str, default=None, nargs="?")
+                    type=str)
 parser.add_argument("path", help="path to the file you want to scan",
-                    type=str, default=None, nargs="?")
+                    type=str, default=sys.stdin, nargs="?")
 parser.add_argument("-r", help="searches a directory recursively",
                     action="store_true")
 parser.add_argument("-d", help="include dotted files in search",
                     action="store_true")
 parser.add_argument("-i", help="ignores case sensitivits", action="store_true")
 parser.add_argument("--ext",  help="add further file extensions to scan for. \
-                    Specify as the last option but before [regex] and [path]. \
-                    Example: spy -r --ext pl hs '^reg*ex+' /path/to/dir",
+                    Specify as the last option. \
+                    Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
                     type=str, nargs="*")
 args = parser.parse_args()
-print(args)
 
 """ determine regex_ and path_ corresponding to user input """
 if args.ext:
-    regex = args.ext[-2]
-    path_ = os.path.abspath(args.ext[-1])
-    VALID_EXTENSIONS.extend(["."+ext for ext in args.ext[:-2]])
-else:
-    path_ = os.path.abspath(args.path)
-    regex = args.regex
-if args.i:
-    regex_ = re.compile(regex, re.I)
-else:
-    regex_ = re.compile(regex)
+    VALID_EXTENSIONS.extend(["."+ext for ext in args.ext])
 
-del regex
+path_ = args.path
+regex_ = args.regex
+
+""" handle the 'i' flag """
+if args.i:
+    regex_ = re.compile(regex_, re.I)
+else:
+    regex_ = re.compile(regex_)
+
+if sys.stdin.isatty():
+    path_ = os.path.abspath(path_)
+else:
+    notatty_ = True
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
@@ -54,6 +57,9 @@ def style(block):
     filename = block[0]
     if not block[1]:
         return ""
+    if "notatty_" in globals():
+        return "\n".join(colorize(str(i+1) + ": ", RED) + line for i, line \
+                         in block[1]) + "\n"
     return colorize(filename, GREEN) + "\n" + "\n".join(colorize(str(i+1) + \
            ": ", RED) + line for i, line in block[1]) + "\n"
 
@@ -72,6 +78,8 @@ def getRelativeFileLocation(path):
     """ returns a path to the currently evaluated file, relative to the
     position in the file system where the program is executed
     """
+    if "notatty_" in globals():
+        return ""
     if path == path_:
         return os.path.basename(path)
     return path[len(path_):]
@@ -95,8 +103,11 @@ def scanFile(path):
     """
     rel_file = getRelativeFileLocation(path)
     try:
-        f = open(path, "r")
-        content = f.read().split("\n")
+        if not "notatty_" in globals():
+            f = open(path, "r")
+            content = f.read().split("\n")
+        else:
+            content = path.read().split("\n")
     except PermissionError:
         print(colorize(f"Couldn't open file: {rel_file}", RED))
         return (None, None)
