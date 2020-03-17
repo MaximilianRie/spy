@@ -4,6 +4,7 @@ import os.path
 import re
 import argparse
 import sys
+from functools import partial
 
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
@@ -17,9 +18,12 @@ parser.add_argument("path", help="path to the file you want to scan",
                     type=str, default=sys.stdin, nargs="?")
 parser.add_argument("-r", help="searches a directory recursively",
                     action="store_true")
-parser.add_argument("-d", help="include dotted files in search",
+parser.add_argument("-a", help="include dotted files in search",
                     action="store_true")
 parser.add_argument("-i", help="ignores case sensitivits", action="store_true")
+parser.add_argument("-x", help="delete every match", action="store_true")
+parser.add_argument("-s", help="substitutes every matching sequence with a \
+                    user defines string", nargs="?", default=False)
 parser.add_argument("--ext",  help="add further file extensions to scan for. \
                     Specify as the last option. \
                     Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
@@ -48,20 +52,54 @@ def colorize(string, color):
     """ colorize a string with ascii escape sequences """
     return color + string + "\u001b[0m"
 
+def lineMatches(line):
+    """ return True if there is a sequence in a line that metches the
+    regex
+    """
+    for val in line.values():
+        if val[1]:
+            return True
+    return False
+
+def highlight(line):
+    """ highlights matching sequences red and concatenates all sequences
+    back to a line
+    """
+    hline = []
+    for val in line.values():
+        if val[1]:
+            hline.append(colorize(val[0], RED))
+        else:
+            hline.append(val[0])
+    return "".join(hline)
+
+def substitute(substitution, scan):
+    """ substitutes each matching sequence with a user defined string """
+    def sub(substitution, line):
+        sline = []
+        for val in line.values():
+            if val[1]:
+                sline.append(substitution)
+            else:
+                sline.append(val[0])
+        return "".join(sline)
+    return "\n".join([sub(substitution, line) for i, line in scan[1]])
+
 def style(block):
     """ a block is the result of scanning a file. It has the stucture
-    ("relative file path", [("lineNr", "highlighted line"), ...]). This
-    function  returns a string with the filename in green and every lineNr
+    ("relative file path", [("lineNr", {1:("section", isaMatchBool), ...]).
+    This function  returns a string with the filename in green and every lineNr
     and every line in a seperated line
     """
     filename = block[0]
-    if not block[1]:
+    matchedLines = [(colorize(str(i) + ": ", RED), highlight(line)) for i, line \
+                    in block[1] if lineMatches(line)]
+    if matchedLines == []:
         return ""
     if "notatty_" in globals():
-        return "\n".join(colorize(str(i+1) + ": ", RED) + line for i, line \
-                         in block[1]) + "\n"
-    return colorize(filename, GREEN) + "\n" + "\n".join(colorize(str(i+1) + \
-           ": ", RED) + line for i, line in block[1]) + "\n"
+        return "\n".join(i + line for i, line in matchedLines) + "\n"
+    return colorize(filename, GREEN) + "\n" + "\n".join(i + line for i, line \
+                                                        in matchedLines) + "\n"
 
 def validatePath(path):
     """ returns if a file is valid by confirming that it does not start with a
@@ -70,9 +108,9 @@ def validatePath(path):
     filename=os.path.basename(path)
     ext = os.path.splitext(filename)[1]
     if os.path.isfile(path):
-        return (filename[0] != "." or args.d) and ext in VALID_EXTENSIONS
+        return (filename[0] != "." or args.a) and ext in VALID_EXTENSIONS
     elif os.path.isdir(path):
-        return filename[0] != "." or args.d
+        return filename[0] != "." or args.a
 
 def getRelativeFileLocation(path):
     """ returns a path to the currently evaluated file, relative to the
@@ -84,17 +122,25 @@ def getRelativeFileLocation(path):
         return os.path.basename(path)
     return path[len(path_):]
 
-def reInLine(line):
+def reInLine(line, n=1):
     """ takes a line as an input and returns a version of it where all
     mathing sequences are colored red
     """
     match = regex_.search(line)
+    if line == "":
+        return {}
     if match:
         ms = match.start()
         me = match.end()
-        return line[0:ms] + colorize(line[ms:me], RED) + \
-               reInLine(line[me:])
-    return line
+        if ms == 0:
+            result = {n:(line[ms:me], True)}
+            result.update(reInLine(line[me:], n+1))
+            return result
+        else:
+            result = {n:(line[0:ms], False), n+1:(line[ms:me], True)}
+            result.update(reInLine(line[me:], n+2))
+            return result
+    return {n:(line, False)}
 
 def scanFile(path):
     """ takes a file as input and returns every line in the file with a match
@@ -115,8 +161,8 @@ def scanFile(path):
         print(colorize(f"Couldn't read file: {rel_file}", RED))
         return (None, None)
     else:
-        return (rel_file, [(i, reInLine(line)) for i, line in enumerate(content)
-                if regex_.search(line)])
+        return (rel_file, [(i+1, reInLine(line)) for i, line \
+                           in enumerate(content)])
     finally:
         try:
             f.close()
@@ -127,7 +173,8 @@ def scanDir(path):
     and the "scanDir" function to every directory
     """
     result = []
-    dirContent = [file_ for file_ in os.listdir(path) if validatePath(os.path.join(path, file_))]
+    dirContent = [file_ for file_ in os.listdir(path)
+                  if validatePath(os.path.join(path, file_))]
     for file_ in dirContent:
         npath = os.path.join(path, file_)
         if os.path.isfile(npath):
@@ -138,8 +185,16 @@ def scanDir(path):
             result.extend(scanDir(npath))
     return result
 
-if not args.r:
-    print(style(scanFile(path_)))
+""" this dict maps every argument to a function """
+PRIORITY_QUEUE = {"x": partial(substitute, ""), "s": partial(substitute, args.s),
+                  "regex": style}
 
+if not args.r:
+    scan = scanFile(path_)
+    for elem, func in PRIORITY_QUEUE.items():
+        if not eval("args." + elem) == False:
+            print(func(scan))
+            break
 else:
-    print("\n".join([style(block) for block in scanDir(path_)]))
+    scannedFiles = [style(block) for block in scanDir(path_)]
+    print("\n".join([file_ for file_ in scannedFiles if not file_ == ""]))
