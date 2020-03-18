@@ -5,6 +5,8 @@ import re
 import argparse
 import sys
 from functools import partial
+from collections import Counter
+from string import Template
 
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
@@ -24,6 +26,9 @@ parser.add_argument("-i", help="ignores case sensitivits", action="store_true")
 parser.add_argument("-x", help="delete every match", action="store_true")
 parser.add_argument("-s", help="substitutes every matching sequence with a \
                     user defines string", nargs="?", default=False)
+parser.add_argument("-v", help="verbose mode will print additional details \
+                     about every file that failed to open or to read", 
+                     action="store_true")
 parser.add_argument("--ext",  help="add further file extensions to scan for. \
                     Specify as the last option. \
                     Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
@@ -37,6 +42,11 @@ if args.ext:
 path_ = args.path
 regex_ = args.regex
 
+EXCEPTIONLIST = {"cnof": Template("Could not open $number files"),
+                 "cnrf": Template("Could not read $number files")}
+EXCEPTIONCOUNT = Counter({"cnof":0, "cnrf":0})
+EXCEPTIONS = {"cnof":[], "cnrf":[]}
+
 """ handle the 'i' flag """
 if args.i:
     regex_ = re.compile(regex_, re.I)
@@ -45,8 +55,6 @@ else:
 
 if sys.stdin.isatty():
     path_ = os.path.abspath(path_)
-else:
-    notatty_ = True
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
@@ -83,7 +91,18 @@ def substitute(substitution, scan):
             else:
                 sline.append(val[0])
         return "".join(sline)
-    return "\n".join([sub(substitution, line) for i, line in scan[1]])
+    return "\n".join([sub(substitution, line) for _, line in scan[1]])
+
+def printExceptions():
+    for exc, temp in EXCEPTIONLIST.items():
+        if EXCEPTIONCOUNT[exc] == 1:
+            print(EXCEPTIONS[exc][0])
+        elif EXCEPTIONCOUNT[exc] > 1:
+            if not args.v:
+                print(colorize(temp.substitute(number = EXCEPTIONCOUNT[exc]), RED))
+            else:
+                for exception in EXCEPTIONS[exc]:
+                    print(exception)
 
 def style(block):
     """ a block is the result of scanning a file. It has the stucture
@@ -96,7 +115,7 @@ def style(block):
                     in block[1] if lineMatches(line)]
     if matchedLines == []:
         return ""
-    if "notatty_" in globals():
+    if not sys.stdin.isatty():
         return "\n".join(i + line for i, line in matchedLines) + "\n"
     return colorize(filename, GREEN) + "\n" + "\n".join(i + line for i, line \
                                                         in matchedLines) + "\n"
@@ -116,7 +135,7 @@ def getRelativeFileLocation(path):
     """ returns a path to the currently evaluated file, relative to the
     position in the file system where the program is executed
     """
-    if "notatty_" in globals():
+    if not sys.stdin.isatty():
         return ""
     if path == path_:
         return os.path.basename(path)
@@ -149,16 +168,16 @@ def scanFile(path):
     """
     rel_file = getRelativeFileLocation(path)
     try:
-        if not "notatty_" in globals():
-            f = open(path, "r")
-            content = f.read().split("\n")
-        else:
-            content = path.read().split("\n")
+        if sys.stdin.isatty():
+            path = open(path, "r")
+        content = path.read().split("\n")
     except PermissionError:
-        print(colorize(f"Couldn't open file: {rel_file}", RED))
+        EXCEPTIONCOUNT["cnof"] += 1
+        EXCEPTIONS["cnof"].append(colorize(f"Couldn't open file: {rel_file}", RED))
         return (None, None)
     except:
-        print(colorize(f"Couldn't read file: {rel_file}", RED))
+        EXCEPTIONS["cnrf"].append(colorize(f"Couldn't read file: {rel_file}", RED))
+        EXCEPTIONCOUNT["cnrf"] += 1
         return (None, None)
     else:
         return (rel_file, [(i+1, reInLine(line)) for i, line \
@@ -191,10 +210,13 @@ PRIORITY_QUEUE = {"x": partial(substitute, ""), "s": partial(substitute, args.s)
 
 if not args.r:
     scan = scanFile(path_)
-    for elem, func in PRIORITY_QUEUE.items():
-        if not eval("args." + elem) == False:
-            print(func(scan))
-            break
+    printExceptions()
+    if not scan[1] == None:
+        for elem, func in PRIORITY_QUEUE.items():
+            if not eval("args." + elem) == False:
+                print(func(scan))
+                break
 else:
     scannedFiles = [style(block) for block in scanDir(path_)]
+    printExceptions()
     print("\n".join([file_ for file_ in scannedFiles if not file_ == ""]))
