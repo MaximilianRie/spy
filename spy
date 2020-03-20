@@ -27,8 +27,16 @@ parser.add_argument("-x", help="delete every match", action="store_true")
 parser.add_argument("-s", help="substitutes every matching sequence with a \
                     user defines string", nargs="?", default=False)
 parser.add_argument("-v", help="verbose mode will print additional details \
-                     about every file that failed to open or to read", 
+                     about every file that failed to open or to read",
                      action="store_true")
+parser.add_argument("-d", help="when specifying this option \
+                    the regular expression will be handled as a delimiter. \
+                    You can set this flag too, if you want to invert the \
+                    search", action="store_true")
+parser.add_argument("-f", help="when a delimiter is specified you can select \
+                    columns", default=False)
+parser.add_argument("-n", help="when using -d and -f you can specify additional \
+                    sperators for outputting the data", nargs="?", default=" ")
 parser.add_argument("--ext",  help="add further file extensions to scan for. \
                     Specify as the last option. \
                     Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
@@ -55,6 +63,22 @@ else:
 
 if sys.stdin.isatty():
     path_ = os.path.abspath(path_)
+
+if args.d and args.f:
+    def parseFields(expr):
+        """ this function translates the syntax of the -f option in a list """
+        def getRange(a):
+            if len(a) == 1:
+                return [int(elem) for elem in a]
+            elif len(a) == 2:
+                return list(range(int(a[0]), int(a[1])+1))
+        # determine every field
+        res = [getRange(elem.split("-")) for elem in expr.split(",")]
+        # flatten the list and remove doubles
+        res = list({elem for sublist in res for elem in sublist})
+        return res
+
+    FIELDS = parseFields(args.f)
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
@@ -99,7 +123,8 @@ def printExceptions():
             print(EXCEPTIONS[exc][0])
         elif EXCEPTIONCOUNT[exc] > 1:
             if not args.v:
-                print(colorize(temp.substitute(number = EXCEPTIONCOUNT[exc]), RED))
+                print(colorize(temp.substitute(number = EXCEPTIONCOUNT[exc]),
+                               RED))
             else:
                 for exception in EXCEPTIONS[exc]:
                     print(exception)
@@ -119,6 +144,29 @@ def style(block):
         return "\n".join(i + line for i, line in matchedLines) + "\n"
     return colorize(filename, GREEN) + "\n" + "\n".join(i + line for i, line \
                                                         in matchedLines) + "\n"
+
+def styleTable(seperator, scan):
+    """ this function styles with the -f optin selected fields as a table
+    with a user defined saperator
+    """
+    def formatLine(line):
+        res = [elem[0] for i, elem in line.items() if elem[1]]
+        res = [elem for i, elem in enumerate(res) if i+1 in FIELDS]
+        return res
+    lines = [formatLine(line) for i, line in scan[1]]
+    maxLine = max([len(line) for line in lines])
+    lines = [line + [""]*(maxLine-len(line)) for line in lines]
+    maxLengths = [max([len(line[i]) for line in lines]) for i in
+                  range(0, maxLine)]
+    def joinLines(line):
+        res = ""
+        for i in range(0, len(line)-1):
+            res = res + line[i] + " "*(maxLengths[i] - len(line[i])) + \
+                  seperator
+        res += line[-1]
+        return res
+    lines = [joinLines(line) for line in lines]
+    return "\n".join(lines)
 
 def validatePath(path):
     """ returns if a file is valid by confirming that it does not start with a
@@ -152,14 +200,15 @@ def reInLine(line, n=1):
         ms = match.start()
         me = match.end()
         if ms == 0:
-            result = {n:(line[ms:me], True)}
+            result = {n:(line[ms:me], (True != args.d))}
             result.update(reInLine(line[me:], n+1))
             return result
         else:
-            result = {n:(line[0:ms], False), n+1:(line[ms:me], True)}
+            result = {n:(line[0:ms], (False != args.d)), n+1:(line[ms:me],
+                                                              (True != args.d))}
             result.update(reInLine(line[me:], n+2))
             return result
-    return {n:(line, False)}
+    return {n:(line, (False != args.d))}
 
 def scanFile(path):
     """ takes a file as input and returns every line in the file with a match
@@ -173,10 +222,12 @@ def scanFile(path):
         content = path.read().split("\n")
     except PermissionError:
         EXCEPTIONCOUNT["cnof"] += 1
-        EXCEPTIONS["cnof"].append(colorize(f"Couldn't open file: {rel_file}", RED))
+        EXCEPTIONS["cnof"].append(colorize(f"Couldn't open file: {rel_file}",
+                                           RED))
         return (None, None)
     except:
-        EXCEPTIONS["cnrf"].append(colorize(f"Couldn't read file: {rel_file}", RED))
+        EXCEPTIONS["cnrf"].append(colorize(f"Couldn't read file: {rel_file}",
+                                           RED))
         EXCEPTIONCOUNT["cnrf"] += 1
         return (None, None)
     else:
@@ -206,7 +257,7 @@ def scanDir(path):
 
 """ this dict maps every argument to a function """
 PRIORITY_QUEUE = {"x": partial(substitute, ""), "s": partial(substitute, args.s),
-                  "regex": style}
+                  "f": partial(styleTable, args.n), "regex": style}
 
 if not args.r:
     scan = scanFile(path_)

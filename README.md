@@ -9,14 +9,14 @@ Using spy is very simple. The easiest way is to search a file for a regular expr
 
 ### Example:
 ```bash
-spy -di "reg*ex+$" path/to/file.js --ext js
+spy -ai "reg*ex+$" path/to/file.js --ext js
 ```
 
 spy can also be used to scan directories. This is as easy as adding the "-r" flag to scan the whole directory recursively.
 
 ### Example:
 ```bash
-spy -dri "Har+y Po..e[rl]" path/to/dir --ext js hs
+spy -ari "Har+y Po..e[rl]" path/to/dir --ext js hs
 ```
 
 spy can also be used in unix pipelines if you want to scan the output of other programs.
@@ -36,4 +36,12 @@ ls -la | spy -x " [1-9].*[1-9]"
 
 # this example changes every occurence of Harry to Larry
 spy -s "Larry" "Harry" infoAboutHarryPotter.txt
+```
+
+Another feature of spy is that you can use it like "cut" to manipulate tables. You can set a delimiter by specifying the -d flag. This will do nothing else but "inverting" your scan. In combination with the -f option you can select fields/columns that will be displayed seperated with enough whitespace. If you want to custumize how tables are displayed, you can set the -n option in combination with a custom seperator.
+
+### Example:
+```bash
+# this will do the opposite as two examples above and with a fancy separator
+ls -la | spy -d -f2-8 -n "/\" "\s+"
 ```
