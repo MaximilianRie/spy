@@ -25,7 +25,7 @@ parser.add_argument("-a", help="include dotted files in search",
 parser.add_argument("-i", help="ignores case sensitivits", action="store_true")
 parser.add_argument("-x", help="delete every match", action="store_true")
 parser.add_argument("-s", help="substitutes every matching sequence with a \
-                    user defines string", nargs="?", default=False)
+                    user defines string", nargs="?", default=False, type=str)
 parser.add_argument("-v", help="verbose mode will print additional details \
                      about every file that failed to open or to read",
                      action="store_true")
@@ -37,6 +37,8 @@ parser.add_argument("-f", help="when a delimiter is specified you can select \
                     columns", default=False)
 parser.add_argument("-n", help="when using -d and -f you can specify additional \
                     sperators for outputting the data", nargs="?", default=" ")
+parser.add_argument("-q", help="activate quiet mode. Every unnecessary output \
+                    will be left out.", action="store_true")
 parser.add_argument("--ext",  help="add further file extensions to scan for. \
                     Specify as the last option. \
                     Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
@@ -93,14 +95,14 @@ def lineMatches(line):
             return True
     return False
 
-def highlight(line):
+def highlight(line, color):
     """ highlights matching sequences red and concatenates all sequences
     back to a line
     """
     hline = []
     for val in line.values():
         if val[1]:
-            hline.append(colorize(val[0], RED))
+            hline.append(colorize(val[0], color))
         else:
             hline.append(val[0])
     return "".join(hline)
@@ -118,16 +120,18 @@ def substitute(substitution, scan):
     return "\n".join([sub(substitution, line) for _, line in scan[1]])
 
 def printExceptions():
-    for exc, temp in EXCEPTIONLIST.items():
-        if EXCEPTIONCOUNT[exc] == 1:
-            print(EXCEPTIONS[exc][0])
-        elif EXCEPTIONCOUNT[exc] > 1:
-            if not args.v:
-                print(colorize(temp.substitute(number = EXCEPTIONCOUNT[exc]),
-                               RED))
-            else:
-                for exception in EXCEPTIONS[exc]:
-                    print(exception)
+    """ handles the exeption printing on the screen """
+    if not args.q:
+        for exc, temp in EXCEPTIONLIST.items():
+            if EXCEPTIONCOUNT[exc] == 1:
+                print(EXCEPTIONS[exc][0])
+            elif EXCEPTIONCOUNT[exc] > 1:
+                if not args.v:
+                    print(colorize(temp.substitute(number = EXCEPTIONCOUNT[exc]),
+                                   RED))
+                else:
+                    for exception in EXCEPTIONS[exc]:
+                        print(exception)
 
 def style(block):
     """ a block is the result of scanning a file. It has the stucture
@@ -135,15 +139,19 @@ def style(block):
     This function  returns a string with the filename in green and every lineNr
     and every line in a seperated line
     """
-    filename = block[0]
-    matchedLines = [(colorize(str(i) + ": ", RED), highlight(line)) for i, line \
-                    in block[1] if lineMatches(line)]
+    if not args.q:
+        filename = colorize(block[0], GREEN) + "\n"
+        matchedLines = [(colorize(str(i) + ": ", RED), highlight(line, RED)) for i, line \
+                        in block[1] if lineMatches(line)]
+    else:
+        filename = ""
+        matchedLines = [("", highlight(line, "")) for _, line in block[1] if lineMatches(line)]
+
     if matchedLines == []:
         return ""
     if not sys.stdin.isatty():
         return "\n".join(i + line for i, line in matchedLines) + "\n"
-    return colorize(filename, GREEN) + "\n" + "\n".join(i + line for i, line \
-                                                        in matchedLines) + "\n"
+    return filename + "\n".join(i + line for i, line in matchedLines) + "\n"
 
 def styleTable(seperator, scan):
     """ this function styles with the -f optin selected fields as a table
@@ -220,6 +228,9 @@ def scanFile(path):
         if sys.stdin.isatty():
             path = open(path, "r")
         content = path.read().split("\n")
+        if content[-1] == "":
+            # this step is necessary if a file ends with a NL-Char
+            content.pop()
     except PermissionError:
         EXCEPTIONCOUNT["cnof"] += 1
         EXCEPTIONS["cnof"].append(colorize(f"Couldn't open file: {rel_file}",

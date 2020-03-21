@@ -45,3 +45,5 @@ Another feature of spy is that you can use it like "cut" to manipulate tables. Y
 # this will do the opposite as two examples above and with a fancy separator
 ls -la | spy -d -f2-8 -n "/\" "\s+"
 ```
+
+If you want to pipe the output of spy to another programm it might disturb you that spy outputs some details like line numbers or filenames. I this this case you can set the -q flag which makes spy only output neccesarry data.
