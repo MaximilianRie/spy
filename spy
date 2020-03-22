@@ -5,7 +5,7 @@ import re
 import argparse
 import sys
 from functools import partial
-from collections import Counter
+from collections import Counter, namedtuple
 from string import Template
 
 RED = "\u001b[31m"
@@ -57,6 +57,19 @@ EXCEPTIONLIST = {"cnof": Template("Could not open $number files"),
 EXCEPTIONCOUNT = Counter({"cnof":0, "cnrf":0})
 EXCEPTIONS = {"cnof":[], "cnrf":[]}
 
+class ScanObject(namedtuple("ScanObject", ["filename", "lineList"])):
+    def __repr__(self):
+        return colorize(self.filename, GREEN) + "\n" + "\n".join([str(line)
+                                                                  for line in self.lineList])
+class LineObj(namedtuple("LineObj", ["lineNR", "lineSeq"])):
+    def __repr__(self):
+        return str(self.lineSeq)
+class LineSeq(namedtuple("LineSeq", ["sequence", "isMatch"])):
+    def __repr__(self):
+        if self.isMatch:
+            return f"({colorize(self.sequence, GREEN)}, {colorize('T', RED)})"
+        return f"({colorize(self.sequence, GREEN)}, {colorize('F', RED)})"
+
 """ handle the 'i' flag """
 if args.i:
     regex_ = re.compile(regex_, re.I)
@@ -67,20 +80,22 @@ if sys.stdin.isatty():
     path_ = os.path.abspath(path_)
 
 if args.d and args.f:
-    def parseFields(expr):
+    def parseFields(expr, end):
         """ this function translates the syntax of the -f option in a list """
         def getRange(a):
             if len(a) == 1:
                 return [int(elem) for elem in a]
             elif len(a) == 2:
+                if a[0] == "":
+                    return list(range(0, int(a[1])+1))
+                if a[1] == "":
+                    return list(range(int(a[0]), end + 1))
                 return list(range(int(a[0]), int(a[1])+1))
         # determine every field
         res = [getRange(elem.split("-")) for elem in expr.split(",")]
         # flatten the list and remove doubles
         res = list({elem for sublist in res for elem in sublist})
         return res
-
-    FIELDS = parseFields(args.f)
 
 def colorize(string, color):
     """ colorize a string with ascii escape sequences """
@@ -90,8 +105,8 @@ def lineMatches(line):
     """ return True if there is a sequence in a line that metches the
     regex
     """
-    for val in line.values():
-        if val[1]:
+    for sequence in line.values():
+        if sequence.isMatch:
             return True
     return False
 
@@ -100,24 +115,24 @@ def highlight(line, color):
     back to a line
     """
     hline = []
-    for val in line.values():
-        if val[1]:
-            hline.append(colorize(val[0], color))
+    for sequence in line.values():
+        if sequence.isMatch:
+            hline.append(colorize(sequence.sequence, color))
         else:
-            hline.append(val[0])
+            hline.append(sequence.sequence)
     return "".join(hline)
 
 def substitute(substitution, scan):
     """ substitutes each matching sequence with a user defined string """
     def sub(substitution, line):
         sline = []
-        for val in line.values():
-            if val[1]:
+        for sequence in line.values():
+            if sequence.isMatch:
                 sline.append(substitution)
             else:
-                sline.append(val[0])
+                sline.append(sequence.sequence)
         return "".join(sline)
-    return "\n".join([sub(substitution, line) for _, line in scan[1]])
+    return "\n".join([sub(substitution, line) for _, line in scan.lineList])
 
 def printExceptions():
     """ handles the exeption printing on the screen """
@@ -133,19 +148,19 @@ def printExceptions():
                     for exception in EXCEPTIONS[exc]:
                         print(exception)
 
-def style(block):
-    """ a block is the result of scanning a file. It has the stucture
+def style(scan):
+    """ a scan is the result of scanning a file. It has the stucture
     ("relative file path", [("lineNr", {1:("section", isaMatchBool), ...]).
     This function  returns a string with the filename in green and every lineNr
     and every line in a seperated line
     """
     if not args.q:
-        filename = colorize(block[0], GREEN) + "\n"
+        filename = colorize(scan.filename, GREEN) + "\n"
         matchedLines = [(colorize(str(i) + ": ", RED), highlight(line, RED)) for i, line \
-                        in block[1] if lineMatches(line)]
+                        in scan.lineList if lineMatches(line)]
     else:
         filename = ""
-        matchedLines = [("", highlight(line, "")) for _, line in block[1] if lineMatches(line)]
+        matchedLines = [("", highlight(line, "")) for _, line in scan.lineList if lineMatches(line)]
 
     if matchedLines == []:
         return ""
@@ -157,22 +172,24 @@ def styleTable(seperator, scan):
     """ this function styles with the -f optin selected fields as a table
     with a user defined saperator
     """
+    end = max([len(line.lineSeq) for line in scan.lineList])
+    FIELDS = parseFields(args.f, end)
     def formatLine(line):
-        res = [elem[0] for i, elem in line.items() if elem[1]]
-        res = [elem for i, elem in enumerate(res) if i+1 in FIELDS]
+        res = [sequence.sequence for _, sequence in line.items() if sequence.isMatch]
+        res = [sequence for i, sequence in enumerate(res) if i+1 in FIELDS]
         return res
-    lines = [formatLine(line) for i, line in scan[1]]
+    lines = [formatLine(line) for _, line in scan.lineList]
     maxLine = max([len(line) for line in lines])
     lines = [line + [""]*(maxLine-len(line)) for line in lines]
     maxLengths = [max([len(line[i]) for line in lines]) for i in
                   range(0, maxLine)]
     def joinLines(line):
-        res = ""
+        jline = ""
         for i in range(0, len(line)-1):
-            res = res + line[i] + " "*(maxLengths[i] - len(line[i])) + \
+            jline = jline + line[i] + " "*(maxLengths[i] - len(line[i])) + \
                   seperator
-        res += line[-1]
-        return res
+        jline += line[-1]
+        return jline
     lines = [joinLines(line) for line in lines]
     return "\n".join(lines)
 
@@ -180,7 +197,7 @@ def validatePath(path):
     """ returns if a file is valid by confirming that it does not start with a
     "." and it's either extensionless or its extention is in VALID_EXTENSIONS
     """
-    filename=os.path.basename(path)
+    filename = os.path.basename(path)
     ext = os.path.splitext(filename)[1]
     if os.path.isfile(path):
         return (filename[0] != "." or args.a) and ext in VALID_EXTENSIONS
@@ -208,19 +225,19 @@ def reInLine(line, n=1):
         ms = match.start()
         me = match.end()
         if ms == 0:
-            result = {n:(line[ms:me], (True != args.d))}
+            result = {n:LineSeq(line[ms:me], (True != args.d))}
             result.update(reInLine(line[me:], n+1))
             return result
         else:
-            result = {n:(line[0:ms], (False != args.d)), n+1:(line[ms:me],
-                                                              (True != args.d))}
+            result = {n:LineSeq(line[0:ms], (False != args.d)),
+                      n+1:LineSeq(line[ms:me], (True != args.d))}
             result.update(reInLine(line[me:], n+2))
             return result
-    return {n:(line, (False != args.d))}
+    return {n:LineSeq(line, (False != args.d))}
 
 def scanFile(path):
     """ takes a file as input and returns every line in the file with a match
-    in the "block"-format:
+    in the "scan"-format:
     ("relative file path", [("lineNr", "highlighted line"), ...])
     """
     rel_file = getRelativeFileLocation(path)
@@ -235,14 +252,14 @@ def scanFile(path):
         EXCEPTIONCOUNT["cnof"] += 1
         EXCEPTIONS["cnof"].append(colorize(f"Couldn't open file: {rel_file}",
                                            RED))
-        return (None, None)
+        return ScanObject(None, None)
     except:
         EXCEPTIONS["cnrf"].append(colorize(f"Couldn't read file: {rel_file}",
                                            RED))
         EXCEPTIONCOUNT["cnrf"] += 1
-        return (None, None)
+        return ScanObject(None, None)
     else:
-        return (rel_file, [(i+1, reInLine(line)) for i, line \
+        return ScanObject(rel_file, [LineObj(i+1, reInLine(line)) for i, line \
                            in enumerate(content)])
     finally:
         try:
@@ -253,32 +270,33 @@ def scanDir(path):
     """ applies the "scanFile" function recursively to every file in a directory
     and the "scanDir" function to every directory
     """
-    result = []
+    sfiles = []
     dirContent = [file_ for file_ in os.listdir(path)
                   if validatePath(os.path.join(path, file_))]
     for file_ in dirContent:
         npath = os.path.join(path, file_)
         if os.path.isfile(npath):
-            res = scanFile(npath)
-            if res[1]:
-                result.append(res)
+            scan = scanFile(npath)
+            if not scan.lineList == None:
+                sfiles.append(scan)
         elif os.path.isdir(npath):
-            result.extend(scanDir(npath))
-    return result
+            sfiles.extend(scanDir(npath))
+    return sfiles
 
 """ this dict maps every argument to a function """
 PRIORITY_QUEUE = {"x": partial(substitute, ""), "s": partial(substitute, args.s),
-                  "f": partial(styleTable, args.n), "regex": style}
+                  "f": partial(styleTable, args.n),
+                  "regex": style}
 
 if not args.r:
     scan = scanFile(path_)
     printExceptions()
-    if not scan[1] == None:
+    if not scan.lineList == None:
         for elem, func in PRIORITY_QUEUE.items():
             if not eval("args." + elem) == False:
                 print(func(scan))
                 break
 else:
-    scannedFiles = [style(block) for block in scanDir(path_)]
+    scannedFiles = [style(scan) for scan in scanDir(path_)]
     printExceptions()
     print("\n".join([file_ for file_ in scannedFiles if not file_ == ""]))
