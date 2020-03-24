@@ -1,118 +1,188 @@
 #!/usr/bin/env python3
+
+
+""" spy is a command line application that searches files or a
+directorys for regular expressions in python format.  Please read the
+README.md for more information and/or visit
+https://github.com/StealthyNiffler/spy .
+"""
+
+
+__autor__ = "Maximilian Rieger"
+__version__ = "2.0"
+__licence__ = "MIT"
+
+
 import os
 import os.path
+import sys
+import string
 import re
 import argparse
-import sys
-from functools import partial
-from collections import Counter, namedtuple
-from string import Template
+import functools as ft
+import collections as coll
+
 
 RED = "\u001b[31m"
 GREEN = "\u001b[32m"
 
 VALID_EXTENSIONS = [".txt", ".py", ".c", "",  ".html", ".php", ".css"]
 
-parser = argparse.ArgumentParser()
-parser.add_argument("regex", help="regular expression to search for",
-                    type=str)
-parser.add_argument("path", help="path to the file you want to scan",
-                    type=str, default=sys.stdin, nargs="?")
-parser.add_argument("-r", help="searches a directory recursively",
-                    action="store_true")
-parser.add_argument("-a", help="include dotted files in search",
-                    action="store_true")
-parser.add_argument("-i", help="ignores case sensitivits", action="store_true")
-parser.add_argument("-x", help="delete every match", action="store_true")
-parser.add_argument("-s", help="substitutes every matching sequence with a \
-                    user defines string", nargs="?", default=False, type=str)
-parser.add_argument("-v", help="verbose mode will print additional details \
-                     about every file that failed to open or to read",
-                     action="store_true")
-parser.add_argument("-d", help="when specifying this option \
-                    the regular expression will be handled as a delimiter. \
-                    You can set this flag too, if you want to invert the \
-                    search", action="store_true")
-parser.add_argument("-f", help="when a delimiter is specified you can select \
-                    columns", default=False)
-parser.add_argument("-n", help="when using -d and -f you can specify additional \
-                    sperators for outputting the data", nargs="?", default=" ")
-parser.add_argument("-q", help="activate quiet mode. Every unnecessary output \
-                    will be left out.", action="store_true")
-parser.add_argument("--ext",  help="add further file extensions to scan for. \
-                    Specify as the last option. \
-                    Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
-                    type=str, nargs="*")
-args = parser.parse_args()
-
-""" determine regex_ and path_ corresponding to user input """
-if args.ext:
-    VALID_EXTENSIONS.extend(["."+ext for ext in args.ext])
-
-path_ = args.path
-regex_ = args.regex
-
-EXCEPTIONLIST = {"cnof": Template("Could not open $number files"),
-                 "cnrf": Template("Could not read $number files")}
-EXCEPTIONCOUNT = Counter({"cnof":0, "cnrf":0})
+EXCEPTIONLIST = {"cnof": string.Template("Could not open $number files"),
+                 "cnrf": string.Template("Could not read $number files")}
+EXCEPTIONCOUNT = coll.Counter({"cnof":0, "cnrf":0})
 EXCEPTIONS = {"cnof":[], "cnrf":[]}
 
-class ScanObject(namedtuple("ScanObject", ["filename", "lineList"])):
+sys.tracebacklimit = 0
+
+
+class ScanObject(coll.namedtuple("ScanObject", ["filename", "lineList"])):
+    """ Simple class to store data after scanning a file.  'lineList'
+    is a list which contains 'LineObj' objects.
+    """
+    def __str__(self):
+        """ debug only """
+        return (colorize(self.filename, GREEN) + "\n"
+                + "\n".join([str(line) for line in self.lineList]))
+
     def __repr__(self):
-        return colorize(self.filename, GREEN) + "\n" + "\n".join([str(line)
-                                                                  for line in self.lineList])
-class LineObj(namedtuple("LineObj", ["lineNR", "lineSeq"])):
+        """ debug only """
+        return (colorize(self.filename, GREEN) + "\n"
+                + "\n\n".join([repr(line) for line in self.lineList]))
+
+
+class LineObj(coll.namedtuple("LineObj", ["lineNR", "lineSeq"])):
+    """ Simple class to store line data after scanning a file.
+    'lineSeq' is a list which contains 'LineSeq' objects.
+    """
+    def __str__(self):
+        """ debug only """
+        return ", ".join([str(sequence) for sequence in self.lineSeq.values()])
+
     def __repr__(self):
-        return str(self.lineSeq)
-class LineSeq(namedtuple("LineSeq", ["sequence", "isMatch"])):
-    def __repr__(self):
+        """ debug only """
+        return (colorize(str(self.lineNR) + ": ", RED) +
+                ", ".join([f"{i} :" + repr(sequence) for i, sequence
+                           in self.lineSeq.items()]))
+
+
+class LineSeq(coll.namedtuple("LineSeq", ["sequence", "isMatch"])):
+    """ Simple class to store sequences after scanning a file.
+    'sequence' is the sting associated with the sequence and 'isMatch'
+    is a bool that states whether a sequence matches the search or not.
+    """
+    def __str__(self):
+        """ debug only """
         if self.isMatch:
             return f"({colorize(self.sequence, GREEN)}, {colorize('T', RED)})"
         return f"({colorize(self.sequence, GREEN)}, {colorize('F', RED)})"
 
-""" handle the 'i' flag """
-if args.i:
-    regex_ = re.compile(regex_, re.I)
-else:
-    regex_ = re.compile(regex_)
+    def __repr__(self):
+        """ debug only """
+        return str(self)
 
-if sys.stdin.isatty():
-    path_ = os.path.abspath(path_)
 
-if args.d and args.f:
-    def parseFields(expr, end):
-        """ this function translates the syntax of the -f option in a list """
-        def getRange(a):
-            if len(a) == 1:
-                return [int(elem) for elem in a]
-            elif len(a) == 2:
-                if a[0] == "":
-                    return list(range(0, int(a[1])+1))
-                if a[1] == "":
-                    return list(range(int(a[0]), end + 1))
-                return list(range(int(a[0]), int(a[1])+1))
-        # determine every field
-        res = [getRange(elem.split("-")) for elem in expr.split(",")]
-        # flatten the list and remove doubles
-        res = list({elem for sublist in res for elem in sublist})
-        return res
+class MissingPathError(Exception):
+    """ Exception to signalise that a path should be specified. """
+    pass
 
-def colorize(string, color):
-    """ colorize a string with ascii escape sequences """
-    return color + string + "\u001b[0m"
+
+def parseArguments():
+    """ Parse all given arguments and return a Namespace Object """
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("regex", help="regular expression to search for",
+                        type=str)
+    parser.add_argument("path", help="path to the file you want to scan",
+                        type=str, default=sys.stdin, nargs="?")
+    parser.add_argument("-r", help="searches a directory recursively",
+                        action="store_true")
+    parser.add_argument("-a", help="include dotted files in search",
+                        action="store_true")
+    parser.add_argument("-i", help="disables case sensitivity",
+                        action="store_true")
+    parser.add_argument("-x", help="delete every match",
+                        action="store_true")
+    parser.add_argument("-s", help="substitutes every matching sequence with \
+                        a user defines string", nargs="?",
+                        default=False, type=str)
+    parser.add_argument("-v", help="verbose mode will print additional \
+                        details about every file that failed to open or to \
+                        read", action="store_true")
+    parser.add_argument("-d", help="When specifying this option the regular \
+                        expression will be handled as a delimiter. You can \
+                        set this flag too, if you want to invert the search.",
+                        action="store_true")
+    parser.add_argument("-f", help="when a delimiter is specified you can \
+                        select columns", default=False)
+    parser.add_argument("-n", help="when using -d and -f you can specify \
+                        additional sperators", nargs="?", default=" ")
+    parser.add_argument("-q", help="activate quiet mode. Every unnecessary \
+                        output will be left out.", action="store_true")
+    parser.add_argument("--ext",  help="Add further file extensions to scan \
+                        for. Specify as the last option. \
+                        Example: spy -r '^reg*ex+' /path/to/dir --ext pl hs",
+                        type=str, nargs="*")
+
+    return parser.parse_args()
+
+def extractArgs(args):
+    """ Determine the PATH and the REGEX based on the given
+    arguments.
+    """
+    if args.i:
+        REGEX = re.compile(args.regex, re.I)
+    else:
+        REGEX = re.compile(args.regex)
+
+    if sys.stdin.isatty():
+        try:
+            PATH = os.path.abspath(args.path)
+        except TypeError:
+            raise MissingPathError("Please enter a valid path")
+    else:
+        PATH = args.path
+
+    return PATH, REGEX
+
+def parseFields(expr, end):
+    """ This function translates the syntax of the -f option in a
+    list containing every selected column.
+    """
+    def getRange(a):
+        if len(a) == 1:
+            return [int(elem) for elem in a]
+        elif len(a) == 2:
+            if a[0] == "":
+                return list(range(0, int(a[1])+1))
+            if a[1] == "":
+                return list(range(int(a[0]), end + 1))
+            return list(range(int(a[0]), int(a[1])+1))
+
+    # determine every field
+    res = [getRange(elem.split("-")) for elem in expr.split(",")]
+    # flatten the list and remove doubles
+    res = list({elem for sublist in res for elem in sublist})
+
+    return res
 
 def lineMatches(line):
-    """ return True if there is a sequence in a line that metches the
-    regex
+    """ Return True if there is a sequence in a line that metches the
+    regex.
     """
     for sequence in line.values():
         if sequence.isMatch:
             return True
+
     return False
 
+def colorize(string, color):
+    """ Colorize a string with ascii escape sequences. """
+    return color + string + "\u001b[0m"
+
 def highlight(line, color):
-    """ highlights matching sequences red and concatenates all sequences
-    back to a line
+    """ Highlights matching sequences red and concatenates all sequences
+    back to a string.
     """
     hline = []
     for sequence in line.values():
@@ -120,10 +190,13 @@ def highlight(line, color):
             hline.append(colorize(sequence.sequence, color))
         else:
             hline.append(sequence.sequence)
+
     return "".join(hline)
 
 def substitute(substitution, scan):
-    """ substitutes each matching sequence with a user defined string """
+    """ Substitutes each matching sequence with a user defined
+    string.
+    """
     def sub(substitution, line):
         sline = []
         for sequence in line.values():
@@ -131,58 +204,88 @@ def substitute(substitution, scan):
                 sline.append(substitution)
             else:
                 sline.append(sequence.sequence)
+
         return "".join(sline)
+
     return "\n".join([sub(substitution, line) for _, line in scan.lineList])
 
-def printExceptions():
-    """ handles the exeption printing on the screen """
-    if not args.q:
+def validatePath(allBool, path):
+    """ Returns if a file is valid by confirming that it does not
+    start with a "." and it's either extensionless or its extention
+    is in VALID_EXTENSIONS.
+    """
+    filename = os.path.basename(path)
+    ext = os.path.splitext(filename)[1]
+    if os.path.isfile(path):
+        return (filename[0] != "." or allBool) and ext in VALID_EXTENSIONS
+    elif os.path.isdir(path):
+        return filename[0] != "." or allBool
+
+def getRelativeFileLocation(PATH, path):
+    """ Returns a path to the currently evaluated file, relative to the
+    position in the file system where the program is executed.
+    """
+    if not sys.stdin.isatty():
+        return ""
+    if path == PATH:
+        return os.path.basename(path)
+
+    return path[len(PATH):]
+
+def printExceptions(quiet, verbose):
+    """ Handles the exeption printing on the screen. """
+    if not quiet:
         for exc, temp in EXCEPTIONLIST.items():
             if EXCEPTIONCOUNT[exc] == 1:
                 print(EXCEPTIONS[exc][0])
             elif EXCEPTIONCOUNT[exc] > 1:
-                if not args.v:
-                    print(colorize(temp.substitute(number = EXCEPTIONCOUNT[exc]),
+                if not verbose:
+                    print(colorize(temp.substitute(number=EXCEPTIONCOUNT[exc]),
                                    RED))
                 else:
                     for exception in EXCEPTIONS[exc]:
                         print(exception)
 
-def style(scan):
-    """ a scan is the result of scanning a file. It has the stucture
-    ("relative file path", [("lineNr", {1:("section", isaMatchBool), ...]).
-    This function  returns a string with the filename in green and every lineNr
-    and every line in a seperated line
+def style(quiet, scan):
+    """ Styles a ScanObject and returns its content if no "-x", "-f",
+    "-s" flag is set.
     """
-    if not args.q:
+    if not quiet:
         filename = colorize(scan.filename, GREEN) + "\n"
-        matchedLines = [(colorize(str(i) + ": ", RED), highlight(line, RED)) for i, line \
-                        in scan.lineList if lineMatches(line)]
+        matchedLines = [(colorize(str(i) + ": ", RED), highlight(line, RED))
+                        for i, line in scan.lineList if lineMatches(line)]
     else:
         filename = ""
-        matchedLines = [("", highlight(line, "")) for _, line in scan.lineList if lineMatches(line)]
+        matchedLines = [("", highlight(line, "")) for _, line
+                        in scan.lineList if lineMatches(line)]
 
     if matchedLines == []:
         return ""
+
     if not sys.stdin.isatty():
         return "\n".join(i + line for i, line in matchedLines) + "\n"
+
     return filename + "\n".join(i + line for i, line in matchedLines) + "\n"
 
-def styleTable(seperator, scan):
-    """ this function styles with the -f optin selected fields as a table
-    with a user defined saperator
+def styleTable(seperator, fields, scan):
+    """ Styles columns that where selected with the "-f" option and
+    retuns their content, seperator with a user specified seperator.
     """
     end = max([len(line.lineSeq) for line in scan.lineList])
-    FIELDS = parseFields(args.f, end)
+    FIELDS = parseFields(fields, end)
+
     def formatLine(line):
-        res = [sequence.sequence for _, sequence in line.items() if sequence.isMatch]
+        res = [sequence.sequence for _, sequence in line.items()
+               if sequence.isMatch]
         res = [sequence for i, sequence in enumerate(res) if i+1 in FIELDS]
         return res
+
     lines = [formatLine(line) for _, line in scan.lineList]
     maxLine = max([len(line) for line in lines])
     lines = [line + [""]*(maxLine-len(line)) for line in lines]
     maxLengths = [max([len(line[i]) for line in lines]) for i in
                   range(0, maxLine)]
+
     def joinLines(line):
         jline = ""
         for i in range(0, len(line)-1):
@@ -190,113 +293,117 @@ def styleTable(seperator, scan):
                   seperator
         jline += line[-1]
         return jline
+
     lines = [joinLines(line) for line in lines]
     return "\n".join(lines)
 
-def validatePath(path):
-    """ returns if a file is valid by confirming that it does not start with a
-    "." and it's either extensionless or its extention is in VALID_EXTENSIONS
+def reInLine(REGEX, delim, line, n=1):
+    """ Tuns a line into a 'LineObj' which contains multiple 'LineSeq'
+    objects that tell which sequence of the line matches the regex.
     """
-    filename = os.path.basename(path)
-    ext = os.path.splitext(filename)[1]
-    if os.path.isfile(path):
-        return (filename[0] != "." or args.a) and ext in VALID_EXTENSIONS
-    elif os.path.isdir(path):
-        return filename[0] != "." or args.a
-
-def getRelativeFileLocation(path):
-    """ returns a path to the currently evaluated file, relative to the
-    position in the file system where the program is executed
-    """
-    if not sys.stdin.isatty():
-        return ""
-    if path == path_:
-        return os.path.basename(path)
-    return path[len(path_):]
-
-def reInLine(line, n=1):
-    """ takes a line as an input and returns a version of it where all
-    mathing sequences are colored red
-    """
-    match = regex_.search(line)
+    match = REGEX.search(line)
     if line == "":
         return {}
+
     if match:
         ms = match.start()
         me = match.end()
         if ms == 0:
-            result = {n:LineSeq(line[ms:me], (True != args.d))}
-            result.update(reInLine(line[me:], n+1))
+            result = {n:LineSeq(line[ms:me], (True != delim))}
+            result.update(reInLine(REGEX, delim, line[me:], n+1))
             return result
         else:
-            result = {n:LineSeq(line[0:ms], (False != args.d)),
-                      n+1:LineSeq(line[ms:me], (True != args.d))}
-            result.update(reInLine(line[me:], n+2))
+            result = {n:LineSeq(line[0:ms], (False != delim)),
+                      n+1:LineSeq(line[ms:me], (True != delim))}
+            result.update(reInLine(REGEX, delim, line[me:], n+2))
             return result
-    return {n:LineSeq(line, (False != args.d))}
 
-def scanFile(path):
-    """ takes a file as input and returns every line in the file with a match
-    in the "scan"-format:
-    ("relative file path", [("lineNr", "highlighted line"), ...])
-    """
-    rel_file = getRelativeFileLocation(path)
+    return {n:LineSeq(line, (False != delim))}
+
+def scanFile(PATH, REGEX, delim, path):
+    """ Scanns a file on 'path' and returns a 'ScanObject' or saves
+    occuring exceptions. """
+    rel_file = getRelativeFileLocation(PATH, path)
+
     try:
         if sys.stdin.isatty():
             path = open(path, "r")
         content = path.read().split("\n")
         if content[-1] == "":
-            # this step is necessary if a file ends with a NL-Char
             content.pop()
+
     except PermissionError:
         EXCEPTIONCOUNT["cnof"] += 1
         EXCEPTIONS["cnof"].append(colorize(f"Couldn't open file: {rel_file}",
                                            RED))
         return ScanObject(None, None)
-    except:
+
+    except UnicodeDecodeError:
         EXCEPTIONS["cnrf"].append(colorize(f"Couldn't read file: {rel_file}",
                                            RED))
         EXCEPTIONCOUNT["cnrf"] += 1
         return ScanObject(None, None)
+
     else:
-        return ScanObject(rel_file, [LineObj(i+1, reInLine(line)) for i, line \
-                           in enumerate(content)])
+        return ScanObject(rel_file, [LineObj(i+1, reInLine(REGEX, delim, line))
+                                     for i, line in enumerate(content)])
     finally:
         try:
             f.close()
-        except: pass
+        except NameError:
+            pass
 
-def scanDir(path):
-    """ applies the "scanFile" function recursively to every file in a directory
-    and the "scanDir" function to every directory
+def scanDir(parScanFile, allBool, path):
+    """ Applies the "scanFile" function recursively to every file in a
+    directory and the "scanDir" function to every directory.
     """
     sfiles = []
     dirContent = [file_ for file_ in os.listdir(path)
-                  if validatePath(os.path.join(path, file_))]
+                  if validatePath(allBool, os.path.join(path, file_))]
+
     for file_ in dirContent:
         npath = os.path.join(path, file_)
         if os.path.isfile(npath):
-            scan = scanFile(npath)
-            if not scan.lineList == None:
+            scan = parScanFile(npath)
+            if scan.lineList is not None:
                 sfiles.append(scan)
         elif os.path.isdir(npath):
-            sfiles.extend(scanDir(npath))
+            sfiles.extend(scanDir(parScanFile, allBool, npath))
+
     return sfiles
 
-""" this dict maps every argument to a function """
-PRIORITY_QUEUE = {"x": partial(substitute, ""), "s": partial(substitute, args.s),
-                  "f": partial(styleTable, args.n),
-                  "regex": style}
+def main():
+    """ Gets executed when the programm is executed as a script. """
+    args = parseArguments()
+    PATH, REGEX = extractArgs(args)
 
-if not args.r:
-    scan = scanFile(path_)
-    printExceptions()
-    if not scan.lineList == None:
-        for elem, func in PRIORITY_QUEUE.items():
-            if not eval("args." + elem) == False:
-                print(func(scan))
-                break
-else:
-    scannedFiles = [style(scan) for scan in scanDir(path_)]
-    printExceptions()
-    print("\n".join([file_ for file_ in scannedFiles if not file_ == ""]))
+    if args.ext:
+        VALID_EXTENSIONS.extend(["."+ext for ext in args.ext])
+
+    # this dict maps every argument to a function
+    PRIORITY_QUEUE = {
+        "x": ft.partial(substitute, ""),
+        "s": ft.partial(substitute, args.s),
+        "f": ft.partial(styleTable, args.n, args.f),
+        "regex": ft.partial(style, args.q)
+    }
+
+    parScanFile = ft.partial(scanFile, PATH, REGEX, args.d)
+
+    if not args.r:
+        scan = parScanFile(PATH)
+        printExceptions(args.q, args.v)
+        if scan.lineList is not None:
+            for elem, func in PRIORITY_QUEUE.items():
+                if not eval("args." + elem) == False:
+                    print(func(scan))
+                    break
+    else:
+        scannedFiles = [style(args.q, scan) for scan
+                        in scanDir(parScanFile, args.a, PATH)]
+        printExceptions(args.q, args.v)
+        print("\n".join([file_ for file_ in scannedFiles if not file_ == ""]))
+
+
+if __name__ == "__main__":
+    main()

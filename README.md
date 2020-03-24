@@ -5,15 +5,14 @@ spy is a command line application that searches files or a directorys for regula
 spy is a python script that can be run from the command line. It's best to move the file to a directory which is encluded in the PATH, so that the shell can easily find it. To show your PATH simply run: ```echo $PATH``` in the command line. It's not encouraged to move spy to a location where a lot of built in programs are like ```/bin```, ```/sbin```, ```/usr/bin``` or ```/usr/sbin``` are. Instead I recommend moving it either to ```/usr/.local/bin``` which might already be in your PATH or to a custom directory that you have manually added to your PATH. 
 
 ## How to use spy
-Using spy is very simple. The easiest way is to search a file for a regular expression. The syntax for an operation like this is: ```spy "regex" path```. Note that by default spy ignores all files that either start with a "." ("secret/hidden files") and files which contain an extension that isn't ```.txt .py .c .html .php .css```. However you can easily activate the search for dotted files with the "-a" flag and add further extensions on the watch list with the "--ext" option. Set the "-i" flag if you want to ignore case sensitivity.
+Using spy is very simple. The easiest way is to search a file for a regular expression. The syntax for an operation like this is: ```spy "regex" path```. Set the "-i" flag if you want to disable case sensitivity.
 
 ### Example:
 ```bash
-spy -ai "reg*ex+$" path/to/file.js --ext js
+spy -i "rEg*eX+$" path/to/file.js
 ```
 
-spy can also be used to scan directories. This is as easy as adding the "-r" flag to scan the whole directory recursively.
-
+spy can also be used to scan directories. This is as easy as adding the "-r" flag to scan the whole directory recursively. Note that by default spy ignores all files that either start with a "." ("secret/hidden files") and files which contain an extension that isn't ```.txt .py .c .html .php .css```.  However you can easily activate the search for dotted files with the "-a" flag and add further extensions on the watch list with the "--ext" option.
 ### Example:
 ```bash
 spy -ari "Har+y Po..e[rl]" path/to/dir --ext js hs
@@ -31,7 +30,7 @@ spy is able to delete and to substitute matches. To delete every match use the "
 
 ### Example:
 ```bash
-# this command shows your every file and its permissions (everything else is getting deleted
+# this command shows your every file and its permissions (everything else is getting deleted [note that this leads to unexpected behaviour when a filename begins with digits.])
 ls -la | spy -x " [1-9].*[1-9]" 
 
 # this example changes every occurence of Harry to Larry
@@ -43,7 +42,7 @@ Another feature of spy is that you can use it like "cut" to manipulate tables. Y
 ### Example:
 ```bash
 # this will do the opposite as two examples above and with a fancy separator
-ls -la | spy -d -f2-8 -n "/\" "\s+"
+ls -la | spy -d -f2,3-8 -n " | " "\s+"
 ```
 
 If you want to pipe the output of spy to another programm it might disturb you that spy outputs some details like line numbers or filenames. I this this case you can set the -q flag which makes spy only output neccesarry data.
